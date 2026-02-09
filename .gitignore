@@ -1,0 +1,36 @@
+# Dependencies
+node_modules
+
+# Build outputs
+build
+.svelte-kit
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.swp
+*.swo
+*~
+
+# Testing
+coverage
+
+# Misc
+.cache
+.temp
+*.local
