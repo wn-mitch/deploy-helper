@@ -39,15 +39,11 @@
 	}
 
 	function handleRemoveUnit(unitId: string) {
-		if (confirm('Remove this unit?')) {
-			unitsStore.removeUnit(unitId);
-		}
+		unitsStore.removeUnit(unitId);
 	}
 
 	function handleClearAll() {
-		if (confirm('Remove all units?')) {
-			unitsStore.clear();
-		}
+		unitsStore.clear();
 	}
 </script>
 
