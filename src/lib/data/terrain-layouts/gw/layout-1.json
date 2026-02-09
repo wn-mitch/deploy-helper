@@ -90,6 +90,12 @@
                 },
                 {
                     "type": "line",
+                    "start": { "x": 1, "y": 1 },
+                    "end": { "x": 1, "y": 5 },
+                    "thickness": 1
+                },
+                {
+                    "type": "line",
                     "start": { "x": 11, "y": 1 },
                     "end": { "x": 11, "y": 5 },
                     "thickness": 1
@@ -211,6 +217,12 @@
                     "type": "line",
                     "start": { "x": 1, "y": 1 },
                     "end": { "x": 11, "y": 1 },
+                    "thickness": 1
+                },
+                {
+                    "type": "line",
+                    "start": { "x": 1, "y": 1 },
+                    "end": { "x": 1, "y": 5 },
                     "thickness": 1
                 },
                 {
