@@ -1,0 +1,784 @@
+<script lang="ts">
+    import { onMount } from "svelte";
+    import Konva from "konva";
+    import type { TerrainPiece } from "$lib/types/terrain";
+    import type { Point } from "$lib/types/geometry";
+    import { inchesToPixels } from "$lib/utils/coordinates";
+    import { PIXELS_PER_INCH } from "$lib/utils/constants";
+    import { isRayBlocked, bresenham } from "$lib/utils/raycasting/bresenham";
+    import {
+        createCollisionSystem,
+        pointIntersectsTerrain,
+    } from "$lib/utils/collision/detector";
+
+    // ============================================================================
+    // TypeScript Interfaces
+    // ============================================================================
+
+    interface TestScenario {
+        id: string;
+        name: string;
+        description: string;
+        boardSize: { width: number; height: number }; // Inches
+        terrain: TerrainPiece[];
+        testUnit: {
+            name: string;
+            baseSize: number; // mm diameter
+            position: Point; // inches
+            color: string;
+        };
+        raySource: {
+            type: "edge";
+            points: Point[]; // Pre-defined source points
+        };
+        expectedResult: "visible" | "safe";
+        notes: string;
+    }
+
+    interface AnalysisResult {
+        result: "visible" | "safe";
+        totalRays: number;
+        blockedCount: number;
+        clearCount: number;
+        matchesExpected: boolean;
+        rayResults: Array<{ source: Point; target: Point; blocked: boolean }>;
+    }
+
+    // ============================================================================
+    // Test Scenarios
+    // ============================================================================
+
+    const scenarios: TestScenario[] = [
+        {
+            id: "scenario-1",
+            name: "Empty Board",
+            description: "Control test - no terrain blocking line of sight",
+            boardSize: { width: 30, height: 20 },
+            terrain: [],
+            testUnit: {
+                name: "Test Unit",
+                baseSize: 32,
+                position: { x: 15, y: 10 },
+                color: "#3b82f6",
+            },
+            raySource: {
+                type: "edge",
+                points: [
+                    { x: 6, y: 0 },
+                    { x: 10, y: 0 },
+                    { x: 15, y: 0 },
+                    { x: 20, y: 0 },
+                    { x: 24, y: 0 },
+                ],
+            },
+            expectedResult: "visible",
+            notes: "All rays should be clear - baseline test",
+        },
+        {
+            id: "scenario-2",
+            name: "Unit Behind Ruin",
+            description:
+                "Full occlusion - unit completely hidden by blocking terrain",
+            boardSize: { width: 30, height: 20 },
+            terrain: [
+                {
+                    id: "ruin-1",
+                    shape: { type: "rectangle", width: 12, height: 6 },
+                    position: { x: 9, y: 4 },
+                    blocking: true,
+                    height: 5,
+                },
+            ],
+            testUnit: {
+                name: "Test Unit",
+                baseSize: 32,
+                position: { x: 15, y: 14 },
+                color: "#3b82f6",
+            },
+            raySource: {
+                type: "edge",
+                points: [
+                    { x: 6, y: 0 },
+                    { x: 10, y: 0 },
+                    { x: 15, y: 0 },
+                    { x: 20, y: 0 },
+                    { x: 24, y: 0 },
+                ],
+            },
+            expectedResult: "safe",
+            notes: "All rays should be blocked by the ruin",
+        },
+        {
+            id: "scenario-3",
+            name: "Partial Cover",
+            description: "Some rays blocked, some clear - unit is visible",
+            boardSize: { width: 30, height: 20 },
+            terrain: [
+                {
+                    id: "wall-1",
+                    shape: { type: "rectangle", width: 3, height: 2 },
+                    position: { x: 13.5, y: 6 },
+                    blocking: true,
+                    height: 5,
+                },
+            ],
+            testUnit: {
+                name: "Test Unit",
+                baseSize: 32,
+                position: { x: 15, y: 10 },
+                color: "#3b82f6",
+            },
+            raySource: {
+                type: "edge",
+                points: [
+                    { x: 6, y: 0 },
+                    { x: 10, y: 0 },
+                    { x: 15, y: 0 },
+                    { x: 20, y: 0 },
+                    { x: 24, y: 0 },
+                ],
+            },
+            expectedResult: "visible",
+            notes: "At least one ray should be clear - unit is exposed",
+        },
+    ];
+
+    // ============================================================================
+    // State
+    // ============================================================================
+
+    let currentScenario = $state(scenarios[0]);
+    let analysisResult = $state<AnalysisResult | null>(null);
+
+    // Konva references
+    let stageContainer: HTMLDivElement;
+    let stage: Konva.Stage;
+    let backgroundLayer: Konva.Layer;
+    let terrainLayer: Konva.Layer;
+    let sourceLayer: Konva.Layer;
+    let unitLayer: Konva.Layer;
+    let visibilityLayer: Konva.Layer;
+
+    // ============================================================================
+    // Drawing Functions
+    // ============================================================================
+
+    function drawBackground() {
+        backgroundLayer.destroyChildren();
+
+        const width = inchesToPixels(currentScenario.boardSize.width);
+        const height = inchesToPixels(currentScenario.boardSize.height);
+
+        // Background rectangle
+        const bg = new Konva.Rect({
+            x: 0,
+            y: 0,
+            width,
+            height,
+            fill: "#1e293b",
+            listening: false,
+        });
+        backgroundLayer.add(bg);
+
+        // Grid lines - 1" intervals (light)
+        for (let x = 0; x <= currentScenario.boardSize.width; x++) {
+            const line = new Konva.Line({
+                points: [inchesToPixels(x), 0, inchesToPixels(x), height],
+                stroke: "#334155",
+                strokeWidth: 1,
+                listening: false,
+            });
+            backgroundLayer.add(line);
+        }
+
+        for (let y = 0; y <= currentScenario.boardSize.height; y++) {
+            const line = new Konva.Line({
+                points: [0, inchesToPixels(y), width, inchesToPixels(y)],
+                stroke: "#334155",
+                strokeWidth: 1,
+                listening: false,
+            });
+            backgroundLayer.add(line);
+        }
+
+        // Grid lines - 5" intervals (bold)
+        for (let x = 0; x <= currentScenario.boardSize.width; x += 5) {
+            const line = new Konva.Line({
+                points: [inchesToPixels(x), 0, inchesToPixels(x), height],
+                stroke: "#475569",
+                strokeWidth: 2,
+                listening: false,
+            });
+            backgroundLayer.add(line);
+        }
+
+        for (let y = 0; y <= currentScenario.boardSize.height; y += 5) {
+            const line = new Konva.Line({
+                points: [0, inchesToPixels(y), width, inchesToPixels(y)],
+                stroke: "#475569",
+                strokeWidth: 2,
+                listening: false,
+            });
+            backgroundLayer.add(line);
+        }
+
+        backgroundLayer.batchDraw();
+    }
+
+    function drawTerrain() {
+        terrainLayer.destroyChildren();
+
+        console.log(
+            "Drawing terrain:",
+            currentScenario.terrain.length,
+            "pieces",
+        );
+
+        for (const piece of currentScenario.terrain) {
+            if (piece.shape.type === "rectangle") {
+                const terrainHeight = piece.height ?? 0;
+                console.log(
+                    "Drawing terrain piece:",
+                    piece.id,
+                    "at",
+                    piece.position,
+                    "size",
+                    piece.shape.width,
+                    "x",
+                    piece.shape.height,
+                );
+
+                const rect = new Konva.Rect({
+                    x: inchesToPixels(piece.position.x),
+                    y: inchesToPixels(piece.position.y),
+                    width: inchesToPixels(piece.shape.width),
+                    height: inchesToPixels(piece.shape.height),
+                    fill: terrainHeight > 4 ? "#6b7280" : "#9ca3af",
+                    stroke: "#f59e0b", // Bright orange border for visibility
+                    strokeWidth: 3,
+                    listening: false,
+                });
+                terrainLayer.add(rect);
+
+                console.log(
+                    "Added rect to layer:",
+                    rect.x(),
+                    rect.y(),
+                    rect.width(),
+                    rect.height(),
+                );
+
+                // Label
+                const label = new Konva.Text({
+                    x: inchesToPixels(piece.position.x),
+                    y:
+                        inchesToPixels(piece.position.y) +
+                        inchesToPixels(piece.shape.height) / 2 -
+                        10,
+                    width: inchesToPixels(piece.shape.width),
+                    text: `${piece.shape.width}"×${piece.shape.height}"\nH:${terrainHeight}"`,
+                    fontSize: 12,
+                    fill: "#ffffff",
+                    align: "center",
+                    listening: false,
+                });
+                terrainLayer.add(label);
+            }
+        }
+
+        console.log(
+            "Terrain layer children count:",
+            terrainLayer.getChildren().length,
+        );
+        terrainLayer.batchDraw();
+    }
+
+    function drawRaySources() {
+        sourceLayer.destroyChildren();
+
+        for (const point of currentScenario.raySource.points) {
+            const circle = new Konva.Circle({
+                x: inchesToPixels(point.x),
+                y: inchesToPixels(point.y),
+                radius: 6,
+                fill: "#fbbf24",
+                stroke: "#f59e0b",
+                strokeWidth: 2,
+                listening: false,
+            });
+            sourceLayer.add(circle);
+        }
+
+        sourceLayer.batchDraw();
+    }
+
+    function drawTestUnit() {
+        unitLayer.destroyChildren();
+
+        const unit = currentScenario.testUnit;
+        const radiusInches = unit.baseSize / 25.4 / 2;
+
+        const circle = new Konva.Circle({
+            x: inchesToPixels(unit.position.x),
+            y: inchesToPixels(unit.position.y),
+            radius: inchesToPixels(radiusInches),
+            fill: unit.color,
+            stroke: "#1e40af",
+            strokeWidth: 2,
+            listening: false,
+        });
+        unitLayer.add(circle);
+
+        // Label
+        const label = new Konva.Text({
+            x: inchesToPixels(unit.position.x) - 30,
+            y: inchesToPixels(unit.position.y) - 20,
+            text: `${unit.name}\n${unit.baseSize}mm`,
+            fontSize: 10,
+            fill: "#ffffff",
+            listening: false,
+        });
+        unitLayer.add(label);
+
+        unitLayer.batchDraw();
+    }
+
+    function drawVisibilityResult(result: AnalysisResult) {
+        visibilityLayer.destroyChildren();
+
+        const unit = currentScenario.testUnit;
+        const radiusInches = unit.baseSize / 25.4 / 2;
+
+        // Draw rays first (so they appear behind the unit overlay)
+        for (const ray of result.rayResults) {
+            const rayColor = ray.blocked ? "#475569" : "#ef4444"; // Gray for blocked, red for clear
+            const rayOpacity = ray.blocked ? 0.3 : 0.7;
+            const rayWidth = ray.blocked ? 1 : 3;
+
+            const line = new Konva.Line({
+                points: [
+                    inchesToPixels(ray.source.x),
+                    inchesToPixels(ray.source.y),
+                    inchesToPixels(ray.target.x),
+                    inchesToPixels(ray.target.y),
+                ],
+                stroke: rayColor,
+                strokeWidth: rayWidth,
+                opacity: rayOpacity,
+                listening: false,
+            });
+            visibilityLayer.add(line);
+        }
+
+        // Draw red overlay on unit if visible (unsafe)
+        if (result.result === "visible") {
+            const dangerCircle = new Konva.Circle({
+                x: inchesToPixels(unit.position.x),
+                y: inchesToPixels(unit.position.y),
+                radius: inchesToPixels(radiusInches),
+                fill: "#ef4444",
+                opacity: 0.4,
+                listening: false,
+            });
+            visibilityLayer.add(dangerCircle);
+        }
+
+        // Overlay circle on unit
+        const color = result.result === "safe" ? "#22c55e" : "#ef4444";
+        const circle = new Konva.Circle({
+            x: inchesToPixels(unit.position.x),
+            y: inchesToPixels(unit.position.y),
+            radius: inchesToPixels(radiusInches) + 5,
+            stroke: color,
+            strokeWidth: 4,
+            listening: false,
+        });
+        visibilityLayer.add(circle);
+
+        // Result label
+        const resultText = new Konva.Text({
+            x: inchesToPixels(unit.position.x) - 40,
+            y:
+                inchesToPixels(unit.position.y) +
+                inchesToPixels(radiusInches) +
+                10,
+            text: result.result.toUpperCase(),
+            fontSize: 14,
+            fontStyle: "bold",
+            fill: color,
+            listening: false,
+        });
+        visibilityLayer.add(resultText);
+
+        visibilityLayer.batchDraw();
+    }
+
+    function clearVisibility() {
+        visibilityLayer.destroyChildren();
+        visibilityLayer.batchDraw();
+    }
+
+    // ============================================================================
+    // Analysis Logic
+    // ============================================================================
+
+    function analyzeVisibility(): AnalysisResult {
+        console.log("=== Starting Analysis ===");
+        console.log("Terrain pieces:", currentScenario.terrain.length);
+        currentScenario.terrain.forEach((piece) => {
+            console.log(
+                "  Terrain piece:",
+                piece.id,
+                "blocking:",
+                piece.blocking,
+                "at",
+                piece.position,
+            );
+        });
+
+        const collisionSystem = createCollisionSystem(currentScenario.terrain);
+        console.log(
+            "Collision system created, bodies:",
+            collisionSystem.all().length,
+        );
+
+        let blockedCount = 0;
+        let clearCount = 0;
+        const rayResults: Array<{
+            source: Point;
+            target: Point;
+            blocked: boolean;
+        }> = [];
+
+        for (const source of currentScenario.raySource.points) {
+            // Log detailed info for the problematic ray at x=10
+            if (source.x === 10) {
+                console.log(
+                    `  *** Detailed analysis for ray from (${source.x}, ${source.y}) ***`,
+                );
+                const samples = [];
+                const dx = currentScenario.testUnit.position.x - source.x;
+                const dy = currentScenario.testUnit.position.y - source.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const steps = Math.ceil(distance / 0.2);
+                const xStep = dx / steps;
+                const yStep = dy / steps;
+
+                for (let i = 0; i <= Math.min(steps, 10); i++) {
+                    const samplePoint = {
+                        x: source.x + xStep * i,
+                        y: source.y + yStep * i,
+                    };
+                    const hits = pointIntersectsTerrain(
+                        collisionSystem,
+                        samplePoint,
+                    );
+                    samples.push({ point: samplePoint, hits });
+                    console.log(
+                        `    Sample ${i}: (${samplePoint.x.toFixed(2)}, ${samplePoint.y.toFixed(2)}) => ${hits ? "HIT" : "miss"}`,
+                    );
+                }
+            }
+
+            const blocked = isRayBlocked(
+                source,
+                currentScenario.testUnit.position,
+                (point) => pointIntersectsTerrain(collisionSystem, point),
+                0.2, // Sample every 0.2 inches
+            );
+
+            console.log(
+                `  Ray from (${source.x}, ${source.y}) to unit: ${blocked ? "BLOCKED" : "CLEAR"}`,
+            );
+
+            rayResults.push({
+                source,
+                target: currentScenario.testUnit.position,
+                blocked,
+            });
+
+            if (blocked) {
+                blockedCount++;
+            } else {
+                clearCount++;
+            }
+        }
+
+        console.log("=== Analysis Complete ===");
+        console.log("Result:", clearCount === 0 ? "SAFE" : "VISIBLE");
+        console.log("Blocked:", blockedCount, "Clear:", clearCount);
+
+        const result = clearCount === 0 ? "safe" : "visible";
+
+        return {
+            result,
+            totalRays: currentScenario.raySource.points.length,
+            blockedCount,
+            clearCount,
+            matchesExpected: result === currentScenario.expectedResult,
+            rayResults,
+        };
+    }
+
+    // ============================================================================
+    // Event Handlers
+    // ============================================================================
+
+    function handleScenarioChange(scenario: TestScenario) {
+        currentScenario = scenario;
+        analysisResult = null;
+        clearVisibility();
+        drawBackground();
+        drawTerrain();
+        drawRaySources();
+        drawTestUnit();
+    }
+
+    function handleAnalyze() {
+        const result = analyzeVisibility();
+        analysisResult = result;
+        drawVisibilityResult(result);
+    }
+
+    function handleClear() {
+        analysisResult = null;
+        clearVisibility();
+    }
+
+    // ============================================================================
+    // Lifecycle
+    // ============================================================================
+
+    onMount(() => {
+        // Create Konva stage
+        stage = new Konva.Stage({
+            container: stageContainer,
+            width: inchesToPixels(currentScenario.boardSize.width),
+            height: inchesToPixels(currentScenario.boardSize.height),
+        });
+
+        // Create layers
+        backgroundLayer = new Konva.Layer();
+        terrainLayer = new Konva.Layer();
+        sourceLayer = new Konva.Layer();
+        unitLayer = new Konva.Layer();
+        visibilityLayer = new Konva.Layer();
+
+        stage.add(backgroundLayer);
+        stage.add(terrainLayer);
+        stage.add(sourceLayer);
+        stage.add(unitLayer);
+        stage.add(visibilityLayer);
+
+        // Initial draw
+        drawBackground();
+        drawTerrain();
+        drawRaySources();
+        drawTestUnit();
+
+        return () => {
+            stage.destroy();
+        };
+    });
+</script>
+
+<div class="min-h-screen bg-slate-900 text-slate-100 p-8">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <div class="mb-8">
+            <h1 class="text-3xl font-bold mb-2">Ray Casting Test Sandbox</h1>
+            <p class="text-slate-400">
+                Isolated testing environment for line-of-sight calculations
+            </p>
+        </div>
+
+        <!-- Scenario Selector -->
+        <div class="mb-6 flex gap-4">
+            {#each scenarios as scenario}
+                <button
+                    onclick={() => handleScenarioChange(scenario)}
+                    class="px-4 py-2 rounded-lg font-medium transition-colors {currentScenario.id ===
+                    scenario.id
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
+                >
+                    {scenario.name}
+                </button>
+            {/each}
+        </div>
+
+        <!-- Current Scenario Info -->
+        <div class="mb-6 bg-slate-800 rounded-lg p-4">
+            <div class="flex items-start justify-between">
+                <div>
+                    <h2 class="text-xl font-semibold mb-1">
+                        {currentScenario.name}
+                    </h2>
+                    <p class="text-slate-400 mb-2">
+                        {currentScenario.description}
+                    </p>
+                    <p class="text-sm text-slate-500">
+                        {currentScenario.notes}
+                    </p>
+                </div>
+                <div class="text-right">
+                    <div class="text-sm text-slate-400">Expected Result:</div>
+                    <div
+                        class="text-lg font-bold {currentScenario.expectedResult ===
+                        'safe'
+                            ? 'text-green-400'
+                            : 'text-red-400'}"
+                    >
+                        {currentScenario.expectedResult.toUpperCase()}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="mb-6 flex gap-4">
+            <button
+                onclick={handleAnalyze}
+                class="px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
+            >
+                Analyze
+            </button>
+            <button
+                onclick={handleClear}
+                class="px-6 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium rounded-lg transition-colors"
+            >
+                Clear
+            </button>
+        </div>
+
+        <!-- Canvas Container -->
+        <div class="mb-6 bg-slate-800 rounded-lg p-4">
+            <div
+                bind:this={stageContainer}
+                class="border border-slate-700 rounded"
+            ></div>
+        </div>
+
+        <!-- Results Panel -->
+        {#if analysisResult}
+            <div
+                class="bg-slate-800 rounded-lg p-6 border-2 {analysisResult.matchesExpected
+                    ? 'border-green-600'
+                    : 'border-red-600'}"
+            >
+                <h3 class="text-xl font-semibold mb-4">Analysis Results</h3>
+
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+                    <!-- Status -->
+                    <div>
+                        <div class="text-sm text-slate-400 mb-1">Status</div>
+                        <div
+                            class="text-2xl font-bold {analysisResult.result ===
+                            'safe'
+                                ? 'text-green-400'
+                                : 'text-red-400'}"
+                        >
+                            {analysisResult.result.toUpperCase()}
+                            {analysisResult.matchesExpected ? "✓" : "✗"}
+                        </div>
+                    </div>
+
+                    <!-- Total Rays -->
+                    <div>
+                        <div class="text-sm text-slate-400 mb-1">
+                            Rays Tested
+                        </div>
+                        <div class="text-2xl font-bold text-slate-100">
+                            {analysisResult.totalRays}
+                        </div>
+                    </div>
+
+                    <!-- Blocked -->
+                    <div>
+                        <div class="text-sm text-slate-400 mb-1">Blocked</div>
+                        <div class="text-2xl font-bold text-slate-100">
+                            {analysisResult.blockedCount}
+                        </div>
+                    </div>
+
+                    <!-- Clear -->
+                    <div>
+                        <div class="text-sm text-slate-400 mb-1">Clear</div>
+                        <div class="text-2xl font-bold text-slate-100">
+                            {analysisResult.clearCount}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Match Status -->
+                <div class="mt-6 pt-6 border-t border-slate-700">
+                    <div class="flex items-center gap-3">
+                        <div class="text-lg font-medium">Match Expected:</div>
+                        <div
+                            class="text-2xl font-bold {analysisResult.matchesExpected
+                                ? 'text-green-400'
+                                : 'text-red-400'}"
+                        >
+                            {analysisResult.matchesExpected ? "YES ✓" : "NO ✗"}
+                        </div>
+                    </div>
+                    {#if !analysisResult.matchesExpected}
+                        <div class="mt-2 text-red-400">
+                            ⚠️ Result does not match expected outcome. Check ray
+                            casting implementation.
+                        </div>
+                    {/if}
+                </div>
+            </div>
+        {:else}
+            <div class="bg-slate-800 rounded-lg p-6 text-center text-slate-400">
+                Click "Analyze" to run ray casting test
+            </div>
+        {/if}
+
+        <!-- Legend -->
+        <div class="mt-8 bg-slate-800 rounded-lg p-4">
+            <h3 class="text-lg font-semibold mb-3">Legend</h3>
+            <div
+                class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 text-sm"
+            >
+                <div class="flex items-center gap-2">
+                    <div class="w-4 h-4 rounded-full bg-yellow-500"></div>
+                    <span>Ray Source Points</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-4 h-4 rounded-full bg-blue-600"></div>
+                    <span>Test Unit</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-4 h-4 bg-gray-500"></div>
+                    <span>Blocking Terrain</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-4 h-1 bg-red-500"></div>
+                    <span>Clear Ray (Dangerous)</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-4 h-1 bg-slate-500 opacity-50"></div>
+                    <span>Blocked Ray</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div
+                        class="w-4 h-4 rounded-full bg-red-500 opacity-40"
+                    ></div>
+                    <span>Unsafe Area</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div
+                        class="w-4 h-4 rounded border-2 border-green-400"
+                    ></div>
+                    <span>Safe (Hidden)</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-4 h-4 rounded border-2 border-red-400"></div>
+                    <span>Visible (Exposed)</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
