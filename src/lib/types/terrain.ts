@@ -18,7 +18,14 @@ export interface PolygonShape {
 	points: Point[]; // Points relative to piece position
 }
 
-export type TerrainShape = RectangleShape | PolygonShape;
+export interface LineShape {
+	type: 'line';
+	start: Point; // Relative to piece position
+	end: Point; // Relative to piece position
+	thickness: number; // inches (1" for walls)
+}
+
+export type TerrainShape = RectangleShape | PolygonShape | LineShape;
 
 // Terrain pieces
 
@@ -39,7 +46,7 @@ export type TerrainShape = RectangleShape | PolygonShape;
 export interface TerrainPiece {
 	id: string;
 	name?: string;
-	shape: TerrainShape;
+	shapes: TerrainShape[]; // Array of shapes - first is footprint, rest are terrain structures
 	position: Point; // Top-left corner for rectangles, reference point for polygons
 	rotation?: number; // Degrees (0, 90, 180, 270) - rotates around position point
 	mirrored?: boolean; // Horizontal flip (scaleX: -1) - applied after rotation
@@ -52,7 +59,7 @@ export interface TerrainPiece {
 
 export interface DeploymentZone {
 	name: string;
-	shape: TerrainShape;
+	shape: TerrainShape; // Keep as single shape for deployment zones (always rectangles)
 	position: Point;
 	color?: string; // Hex color for visualization
 }

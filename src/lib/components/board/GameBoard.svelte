@@ -291,152 +291,130 @@
 		terrainLayer.destroyChildren();
 
 		pieces.forEach((piece) => {
-			const fillColor = piece.blocking ? '#6b7280' : '#9ca3af';
-			const strokeColor = piece.blocking ? '#4b5563' : '#6b7280';
-			const opacity = piece.height && piece.height > 4 ? 0.9 : 0.7;
+			// Create a group to handle rotation and mirroring uniformly for all shapes
+			const group = new Konva.Group({
+				x: inchesToPixels(piece.position.x),
+				y: inchesToPixels(piece.position.y),
+				rotation: piece.rotation || 0,
+				scaleX: piece.mirrored ? -1 : 1,
+				listening: false
+			});
 
-			if (piece.shape.type === 'rectangle') {
-				// Konva.Rect already rotates around (x, y) which is the top-left corner by default
-				const rect = new Konva.Rect({
-					x: inchesToPixels(piece.position.x),
-					y: inchesToPixels(piece.position.y),
-					width: inchesToPixels(piece.shape.width),
-					height: inchesToPixels(piece.shape.height),
-					fill: fillColor,
-					stroke: strokeColor,
-					strokeWidth: 2,
-					opacity,
-					rotation: piece.rotation || 0,
-					scaleX: piece.mirrored ? -1 : 1 // Horizontal flip when mirrored
-				});
-				terrainLayer.add(rect);
+			// Calculate center for debug label (use first shape which is the footprint)
+			const footprint = piece.shapes[0];
+			let localCenterX = 0;
+			let localCenterY = 0;
 
-				// Debug: Add white dot at position corner (anchor point)
-				const cornerDot = new Konva.Circle({
-					x: inchesToPixels(piece.position.x),
-					y: inchesToPixels(piece.position.y),
-					radius: 4,
-					fill: '#ffffff',
-					stroke: '#000000',
-					strokeWidth: 1,
-					opacity: 1.0,
-					listening: false
-				});
-				terrainLayer.add(cornerDot);
-
-				// Debug: Calculate center point accounting for rotation and mirroring
-				// When rotated, the visual center moves from the geometric center
-				// because rotation happens around the top-left corner (position point)
-				const angleRad = ((piece.rotation || 0) * Math.PI) / 180;
-				let localCenterX = piece.shape.width / 2; // Local coordinates (inches)
-				const localCenterY = piece.shape.height / 2;
-
-				// Apply mirroring to local center X (flip horizontally)
-				if (piece.mirrored) {
-					localCenterX = -localCenterX;
-				}
-
-				// Apply rotation transformation to local center
-				const rotatedOffsetX =
-					localCenterX * Math.cos(angleRad) - localCenterY * Math.sin(angleRad);
-				const rotatedOffsetY =
-					localCenterX * Math.sin(angleRad) + localCenterY * Math.cos(angleRad);
-
-				// Final center position in global coordinates
-				const centerX = inchesToPixels(piece.position.x + rotatedOffsetX);
-				const centerY = inchesToPixels(piece.position.y + rotatedOffsetY);
-
-				// Debug: Add piece ID label at center
-				const label = new Konva.Text({
-					x: centerX,
-					y: centerY,
-					text: piece.id,
-					fontSize: 14,
-					fontFamily: 'Arial',
-					fill: '#ffffff',
-					stroke: '#000000',
-					strokeWidth: 0.5,
-					opacity: 1.0,
-					offsetY: 7, // Center vertically (half of fontSize)
-					listening: false
-				});
-
-				// Center the text horizontally after creation
-				label.offsetX(label.width() / 2);
-
-				terrainLayer.add(label);
-			} else if (piece.shape.type === 'polygon') {
-				const points = piece.shape.points.flatMap((p) => [
-					inchesToPixels(piece.position.x + p.x),
-					inchesToPixels(piece.position.y + p.y)
-				]);
-				const polygon = new Konva.Line({
-					points,
-					fill: fillColor,
-					stroke: strokeColor,
-					strokeWidth: 2,
-					opacity,
-					closed: true,
-					rotation: piece.rotation || 0,
-					scaleX: piece.mirrored ? -1 : 1 // Horizontal flip when mirrored
-				});
-				terrainLayer.add(polygon);
-
-				// Debug: Add white dot at position corner (anchor point)
-				const cornerDot = new Konva.Circle({
-					x: inchesToPixels(piece.position.x),
-					y: inchesToPixels(piece.position.y),
-					radius: 4,
-					fill: '#ffffff',
-					stroke: '#000000',
-					strokeWidth: 1,
-					opacity: 1.0,
-					listening: false
-				});
-				terrainLayer.add(cornerDot);
-
-				// Debug: Calculate center of polygon (average of all points in local coordinates)
-				let localCenterX =
-					piece.shape.points.reduce((sum, p) => sum + p.x, 0) / piece.shape.points.length;
-				const localCenterY =
-					piece.shape.points.reduce((sum, p) => sum + p.y, 0) / piece.shape.points.length;
-
-				// Apply mirroring to local center X (flip horizontally)
-				if (piece.mirrored) {
-					localCenterX = -localCenterX;
-				}
-
-				// Apply rotation transformation if there's a rotation
-				let rotatedOffsetX = localCenterX;
-				let rotatedOffsetY = localCenterY;
-				if (piece.rotation) {
-					const angleRad = (piece.rotation * Math.PI) / 180;
-					rotatedOffsetX =
-						localCenterX * Math.cos(angleRad) - localCenterY * Math.sin(angleRad);
-					rotatedOffsetY =
-						localCenterX * Math.sin(angleRad) + localCenterY * Math.cos(angleRad);
-				}
-
-				// Debug: Add piece ID label at center (convert to pixels)
-				const label = new Konva.Text({
-					x: inchesToPixels(piece.position.x + rotatedOffsetX),
-					y: inchesToPixels(piece.position.y + rotatedOffsetY),
-					text: piece.id,
-					fontSize: 14,
-					fontFamily: 'Arial',
-					fill: '#ffffff',
-					stroke: '#000000',
-					strokeWidth: 0.5,
-					opacity: 1.0,
-					offsetY: 7,
-					listening: false
-				});
-
-				// Center the text horizontally
-				label.offsetX(label.width() / 2);
-
-				terrainLayer.add(label);
+			if (footprint.type === 'rectangle') {
+				localCenterX = footprint.width / 2;
+				localCenterY = footprint.height / 2;
+			} else if (footprint.type === 'polygon') {
+				localCenterX = footprint.points.reduce((sum, p) => sum + p.x, 0) / footprint.points.length;
+				localCenterY = footprint.points.reduce((sum, p) => sum + p.y, 0) / footprint.points.length;
 			}
+
+			// Render each shape in the array
+			piece.shapes.forEach((shape, index) => {
+				const isFootprint = index === 0; // First shape is always the footprint
+
+				if (shape.type === 'rectangle') {
+					const fillColor = isFootprint ? '#6b7280' : '#8b7355'; // Gray for footprint, brown for terrain
+					const strokeColor = isFootprint ? '#4b5563' : '#6b4423';
+					const opacity = isFootprint ? 0.4 : 0.8;
+
+					// Calculate position - footprints start at (0,0) in local coords, boxes need centering
+					let rectX = 0;
+					let rectY = 0;
+
+					// Center non-footprint boxes within their footprint
+					if (!isFootprint && footprint.type === 'rectangle') {
+						const offsetX = (footprint.width - shape.width) / 2;
+						const offsetY = (footprint.height - shape.height) / 2;
+						rectX = offsetX;
+						rectY = offsetY;
+					}
+
+					const rect = new Konva.Rect({
+						x: inchesToPixels(rectX),
+						y: inchesToPixels(rectY),
+						width: inchesToPixels(shape.width),
+						height: inchesToPixels(shape.height),
+						fill: fillColor,
+						stroke: strokeColor,
+						strokeWidth: 2,
+						opacity,
+						listening: false
+					});
+					group.add(rect);
+				} else if (shape.type === 'polygon') {
+					const fillColor = isFootprint ? '#6b7280' : '#8b7355';
+					const strokeColor = isFootprint ? '#4b5563' : '#6b4423';
+					const opacity = isFootprint ? 0.4 : 0.8;
+
+					const points = shape.points.flatMap((p) => [inchesToPixels(p.x), inchesToPixels(p.y)]);
+					const polygon = new Konva.Line({
+						points,
+						fill: fillColor,
+						stroke: strokeColor,
+						strokeWidth: 2,
+						opacity,
+						closed: true,
+						listening: false
+					});
+					group.add(polygon);
+				} else if (shape.type === 'line') {
+					// Lines render as stroked paths (ruin walls)
+					const line = new Konva.Line({
+						points: [
+							inchesToPixels(shape.start.x),
+							inchesToPixels(shape.start.y),
+							inchesToPixels(shape.end.x),
+							inchesToPixels(shape.end.y)
+						],
+						stroke: '#8b7355', // Brown for ruins
+						strokeWidth: inchesToPixels(shape.thickness), // Convert thickness from inches to pixels
+						lineCap: 'square',
+						lineJoin: 'miter',
+						opacity: 0.9,
+						listening: false
+					});
+					group.add(line);
+				}
+			});
+
+			// Debug: Add white dot at position corner (anchor point) - in group local coords
+			const cornerDot = new Konva.Circle({
+				x: 0,
+				y: 0,
+				radius: 4,
+				fill: '#ffffff',
+				stroke: '#000000',
+				strokeWidth: 1,
+				opacity: 1.0,
+				listening: false
+			});
+			group.add(cornerDot);
+
+			// Debug: Add piece ID label at center - in group local coords
+			const label = new Konva.Text({
+				x: inchesToPixels(localCenterX),
+				y: inchesToPixels(localCenterY),
+				text: piece.id,
+				fontSize: 14,
+				fontFamily: 'Arial',
+				fill: '#ffffff',
+				stroke: '#000000',
+				strokeWidth: 0.5,
+				opacity: 1.0,
+				offsetY: 7,
+				listening: false
+			});
+
+			// Center the text horizontally after creation
+			label.offsetX(label.width() / 2);
+			group.add(label);
+
+			terrainLayer.add(group);
 		});
 
 		terrainLayer.batchDraw();
