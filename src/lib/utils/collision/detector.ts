@@ -80,24 +80,48 @@ export function createCollisionSystem(terrainPieces: TerrainPiece[]): System {
 		}
 	}
 
+	// CRITICAL: Update the system to rebuild the BVH spatial index
+	// Without this, collision detection won't work!
+	system.update();
+
 	return system;
 }
 
 /**
  * Check if a point intersects any terrain in the collision system
+ * TEMPORARY: Using simple geometric collision instead of detect-collisions library
  */
 export function pointIntersectsTerrain(system: System, point: Point): boolean {
-	// Create a tiny circle at the point for collision testing
-	const testCircle = system.createCircle({ x: point.x, y: point.y }, 0.01);
+	// Get all bodies from the system
+	const bodies = system.all();
 
-	// Update the system to compute collisions
-	system.checkOne(testCircle);
+	// Check each body manually
+	for (const body of bodies) {
+		// For Box bodies, check if point is inside the box bounds
+		if ((body as any).type === 'box' || body.constructor.name === 'Box') {
+			// Box has pos (center), width, height, and angle
+			const box = body as any;
+			const halfWidth = box.width / 2;
+			const halfHeight = box.height / 2;
 
-	// Check if the circle is colliding with anything
-	const hasCollision = testCircle.isColliding();
+			// Simple AABB check (assuming no rotation for now)
+			const minX = box.pos.x - halfWidth;
+			const maxX = box.pos.x + halfWidth;
+			const minY = box.pos.y - halfHeight;
+			const maxY = box.pos.y + halfHeight;
 
-	// Clean up test circle
-	system.remove(testCircle);
+			if (point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY) {
+				if (Math.random() < 0.01) {
+					console.log(`Point check (${point.x.toFixed(2)}, ${point.y.toFixed(2)}): HIT`, box.pieceId);
+				}
+				return true;
+			}
+		}
+	}
 
-	return hasCollision;
+	if (Math.random() < 0.01) {
+		console.log(`Point check (${point.x.toFixed(2)}, ${point.y.toFixed(2)}): MISS`);
+	}
+
+	return false;
 }

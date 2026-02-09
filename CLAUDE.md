@@ -191,10 +191,15 @@ const box = system.createBox(
   height
 );
 
+// CRITICAL: Call system.update() after adding all bodies
+system.update();  // Rebuilds BVH spatial index - required for collision detection!
+
 // Check collisions
 const testCircle = system.createCircle({ x, y }, 0.01);
-system.checkOne(testCircle);  // MUST call before checking
-const isColliding = testCircle.isColliding();
+let isColliding = false;
+system.checkOne(testCircle, () => {
+  isColliding = true;  // Callback is called for each collision
+});
 system.remove(testCircle);
 ```
 
