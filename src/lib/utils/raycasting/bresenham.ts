@@ -1,4 +1,6 @@
 import type { Point } from '$lib/types/terrain';
+import type { TerrainCollisionSystems } from '$lib/utils/collision/detector';
+import { pointIntersectsTerrainSelective } from '$lib/utils/collision/detector';
 
 /**
  * Bresenham's line algorithm for sampling points along a ray
@@ -64,6 +66,38 @@ export function isRayBlocked(
 	// Check each sample point for intersection
 	for (const sample of samples) {
 		if (checkIntersection(sample)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Cast a ray with selective terrain blocking (terrain-aware LOS).
+ *
+ * Models standing ON terrain can see through that terrain's footprint,
+ * but models BEHIND terrain are blocked. Walls always block.
+ *
+ * @param from Source point (inches)
+ * @param to Target point (inches)
+ * @param collisionSystems Enhanced collision systems with separated footprints/walls
+ * @param excludeFootprints Array of piece IDs whose footprints should not block
+ * @param step Sample step size (inches)
+ * @returns true if blocked, false if clear line of sight
+ */
+export function isRayBlockedSelective(
+	from: Point,
+	to: Point,
+	collisionSystems: TerrainCollisionSystems,
+	excludeFootprints: string[],
+	step: number = 0.1
+): boolean {
+	const samples = bresenham(from.x, from.y, to.x, to.y, step);
+
+	// Check each sample point for intersection
+	for (const sample of samples) {
+		if (pointIntersectsTerrainSelective(collisionSystems, sample, excludeFootprints)) {
 			return true;
 		}
 	}

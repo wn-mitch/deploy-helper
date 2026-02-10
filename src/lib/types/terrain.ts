@@ -25,7 +25,12 @@ export interface LineShape {
 	thickness: number; // inches (1" for walls)
 }
 
-export type TerrainShape = RectangleShape | PolygonShape | LineShape;
+export interface CircleShape {
+	type: 'circle';
+	radius: number; // inches
+}
+
+export type TerrainShape = RectangleShape | PolygonShape | LineShape | CircleShape;
 
 // Terrain pieces
 
@@ -49,7 +54,7 @@ export interface TerrainPiece {
 	shapes: TerrainShape[]; // Array of shapes - first is footprint, rest are terrain structures
 	position: Point; // Top-left corner for rectangles, reference point for polygons
 	rotation?: number; // Degrees (0, 90, 180, 270) - rotates around position point
-	mirrored?: boolean; // Horizontal flip (scaleX: -1) - applied after rotation
+	mirrored?: boolean | 'horizontal' | 'vertical'; // Flip direction - applied before rotation (boolean = horizontal for backward compat)
 	blocking: boolean; // Blocks line of sight?
 	height?: number; // inches (for future height rules)
 	category?: 'ruins' | 'walls' | 'debris' | 'structure';

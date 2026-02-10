@@ -5,8 +5,13 @@ import type {
 	VisibilityStats,
 	VisibilitySource
 } from '$lib/types/raycasting';
-import { createCollisionSystem, pointIntersectsTerrain } from '$lib/utils/collision/detector';
-import { isRayBlocked } from './bresenham';
+import {
+	createCollisionSystem,
+	createTerrainCollisionSystems,
+	pointIntersectsTerrain
+} from '$lib/utils/collision/detector';
+import { isRayBlocked, isRayBlockedSelective } from './bresenham';
+import { getTerrainOccupancy } from '$lib/utils/collision/occupancy';
 import { BOARD_WIDTH, BOARD_HEIGHT, ZONE_SAMPLE_SPACING } from '$lib/utils/constants';
 
 /**
@@ -47,8 +52,17 @@ export function generateVisibilityMap(
 	gridResolution: number = 2,
 	onProgress?: (progress: number) => void
 ): VisibilityGrid {
-	// Create collision system for efficient terrain queries
-	const collisionSystem = createCollisionSystem(terrainPieces);
+	// Create enhanced collision systems for terrain-aware LOS
+	const collisionSystems = createTerrainCollisionSystems(terrainPieces);
+
+	// Pre-compute terrain occupancy for all source points (optimization)
+	// This saves repeated occupancy calculations during ray casting
+	const sourceOccupancy = new Map<string, string[]>();
+	for (const source of sourcePoints) {
+		const occupiedPieces = getTerrainOccupancy(source, terrainPieces);
+		const key = `${source.x},${source.y}`;
+		sourceOccupancy.set(key, occupiedPieces);
+	}
 
 	// Generate grid cells
 	const columns = Math.ceil(BOARD_WIDTH / gridResolution);
@@ -82,13 +96,25 @@ export function generateVisibilityMap(
 			const cell = cells[row][col];
 			let hasLineOfSight = false;
 
+			// Determine which terrain pieces this cell is standing on
+			const cellOccupancy = getTerrainOccupancy(cell.centerPosition, terrainPieces);
+
 			// Check visibility from each source point
 			// Early exit: if ANY source point can see this cell, it's a danger zone
 			for (const source of sourcePoints) {
-				const blocked = isRayBlocked(
+				// Get source's terrain occupancy
+				const sourceKey = `${source.x},${source.y}`;
+				const sourcePieces = sourceOccupancy.get(sourceKey) || [];
+
+				// Combine exclusions: both source and target footprints don't block
+				const excludeFootprints = new Set([...sourcePieces, ...cellOccupancy]);
+
+				// Cast ray with selective blocking
+				const blocked = isRayBlockedSelective(
 					source,
 					cell.centerPosition,
-					(point) => pointIntersectsTerrain(collisionSystem, point),
+					collisionSystems,
+					Array.from(excludeFootprints),
 					0.2 // Sample every 0.2 inches
 				);
 
