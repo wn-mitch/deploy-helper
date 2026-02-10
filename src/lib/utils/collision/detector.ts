@@ -1,5 +1,5 @@
 import { System } from 'detect-collisions';
-import type { TerrainPiece, Point, Shape } from '$lib/types/terrain';
+import type { TerrainPiece, Point, TerrainShape } from '$lib/types/terrain';
 
 /**
  * Enhanced collision detection systems for terrain-aware LOS
@@ -35,10 +35,9 @@ export function createCollisionSystem(terrainPieces: TerrainPiece[]): System {
 		// Process all shapes (for backward compatibility, treat all shapes as blocking)
 		for (let shapeIndex = 0; shapeIndex < piece.shapes.length; shapeIndex++) {
 			const shape = piece.shapes[shapeIndex];
-			const body = createBodyFromShape(shape, piece);
+			const body = createBodyFromShape(shape, piece, system);
 			if (body) {
 				addBodyMetadata(body, piece.id, shapeIndex, shapeIndex === 0);
-				system.insert(body);
 			}
 		}
 	}
@@ -82,22 +81,31 @@ export function createTerrainCollisionSystems(
 				continue;
 			}
 
-			// Create collision body
-			const body = createBodyFromShape(shape, piece);
-			if (!body) continue;
-
-			// Attach metadata
-			addBodyMetadata(body, piece.id, shapeIndex, isFootprint);
-
-			// Add to appropriate systems
-			fullSystem.insert(body);
+			// Create separate bodies for each system (bodies can't be shared between systems)
+			const fullBody = createBodyFromShape(shape, piece, fullSystem);
+			if (!fullBody) continue;
+			addBodyMetadata(fullBody, piece.id, shapeIndex, isFootprint);
 
 			if (isFootprint) {
-				footprintsSystem.insert(body);
-				pieceFootprintSystem.insert(body);
+				const footprintBody = createBodyFromShape(shape, piece, footprintsSystem);
+				if (footprintBody) {
+					addBodyMetadata(footprintBody, piece.id, shapeIndex, isFootprint);
+				}
+
+				const pieceFootprintBody = createBodyFromShape(shape, piece, pieceFootprintSystem);
+				if (pieceFootprintBody) {
+					addBodyMetadata(pieceFootprintBody, piece.id, shapeIndex, isFootprint);
+				}
 			} else {
-				wallsSystem.insert(body);
-				pieceWallsSystem.insert(body);
+				const wallBody = createBodyFromShape(shape, piece, wallsSystem);
+				if (wallBody) {
+					addBodyMetadata(wallBody, piece.id, shapeIndex, isFootprint);
+				}
+
+				const pieceWallBody = createBodyFromShape(shape, piece, pieceWallsSystem);
+				if (pieceWallBody) {
+					addBodyMetadata(pieceWallBody, piece.id, shapeIndex, isFootprint);
+				}
 			}
 		}
 
@@ -127,14 +135,12 @@ export function createTerrainCollisionSystems(
  * Creates a collision body from a shape definition.
  * Handles rectangles, polygons, circles, and lines.
  */
-function createBodyFromShape(shape: Shape, piece: TerrainPiece): any {
-	const tempSystem = new System();
-
+function createBodyFromShape(shape: TerrainShape, piece: TerrainPiece, system: System): any {
 	if (shape.type === 'rectangle') {
 		// Create a box body - Box expects center position, not top-left
 		const centerX = piece.position.x + shape.width / 2;
 		const centerY = piece.position.y + shape.height / 2;
-		const box = tempSystem.createBox({ x: centerX, y: centerY }, shape.width, shape.height);
+		const box = system.createBox({ x: centerX, y: centerY }, shape.width, shape.height);
 
 		// Apply rotation if specified (convert degrees to radians)
 		if (piece.rotation) {
@@ -152,14 +158,14 @@ function createBodyFromShape(shape: Shape, piece: TerrainPiece): any {
 
 		// Apply mirroring if specified (horizontal flip around x=0 in local space)
 		if (piece.mirrored) {
-			localPoints = localPoints.map((p) => ({
+			localPoints = localPoints.map((p: Point) => ({
 				x: -p.x,
 				y: p.y
 			}));
 		}
 
 		// Convert to absolute coordinates
-		let absolutePoints = localPoints.map((p) => ({
+		let absolutePoints = localPoints.map((p: Point) => ({
 			x: piece.position.x + p.x,
 			y: piece.position.y + p.y
 		}));
@@ -171,7 +177,7 @@ function createBodyFromShape(shape: Shape, piece: TerrainPiece): any {
 			const cos = Math.cos(angleRad);
 			const sin = Math.sin(angleRad);
 
-			absolutePoints = absolutePoints.map((p) => {
+			absolutePoints = absolutePoints.map((p: Point) => {
 				// Translate to origin
 				const dx = p.x - piece.position.x;
 				const dy = p.y - piece.position.y;
@@ -188,13 +194,13 @@ function createBodyFromShape(shape: Shape, piece: TerrainPiece): any {
 			});
 		}
 
-		const poly = tempSystem.createPolygon(piece.position, absolutePoints);
+		const poly = system.createPolygon(piece.position, absolutePoints);
 		return poly;
 	} else if (shape.type === 'circle') {
 		// Create a circle body
 		const centerX = piece.position.x;
 		const centerY = piece.position.y;
-		const circle = tempSystem.createCircle({ x: centerX, y: centerY }, shape.radius);
+		const circle = system.createCircle({ x: centerX, y: centerY }, shape.radius);
 		return circle;
 	} else if (shape.type === 'line') {
 		// Lines are treated as thin rectangles for collision detection
@@ -207,7 +213,7 @@ function createBodyFromShape(shape: Shape, piece: TerrainPiece): any {
 		const centerX = piece.position.x + (shape.start.x + shape.end.x) / 2;
 		const centerY = piece.position.y + (shape.start.y + shape.end.y) / 2;
 
-		const box = tempSystem.createBox({ x: centerX, y: centerY }, length, shape.thickness);
+		const box = system.createBox({ x: centerX, y: centerY }, length, shape.thickness);
 		box.setAngle(angle);
 
 		// Apply piece rotation if specified

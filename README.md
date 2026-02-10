@@ -6,7 +6,8 @@ A browser-based application to help Warhammer 40k players optimize their model p
 
 ### ✅ Implemented (MVP)
 
-- **Terrain Visualization**: 8 official GW terrain layouts rendered on a 60"×44" board
+- **Terrain Visualization**: GW terrain layouts rendered on a 60"×44" board
+- **Deployment Patterns**: 6 official Leviathan deployment patterns (Dawn of War, Hammer and Anvil, etc.)
 - **Interactive Unit Placement**: Add units with various base sizes (25mm-170mm) and drag them into position
 - **Double-click Lock**: Lock/unlock bases to prevent accidental movement
 - **Visibility Analysis**: Binary danger/safe zone heat maps showing which positions are visible from opponent deployment zones
@@ -15,10 +16,10 @@ A browser-based application to help Warhammer 40k players optimize their model p
 
 ### Technical Stack
 
-- **Framework**: SvelteKit 2 with TypeScript
-- **Rendering**: Canvas via svelte-konva (high performance for many objects)
+- **Framework**: SvelteKit 2 with Svelte 5 and TypeScript
+- **Rendering**: Canvas via Konva.js (direct API, not svelte-konva due to Svelte 5 incompatibility)
 - **Styling**: Tailwind CSS
-- **Ray Casting**: detect-collisions (BVH optimization) + custom Bresenham algorithm
+- **Ray Casting**: detect-collisions v7 (BVH optimization) + custom Bresenham algorithm
 - **Build**: Vite + static site generation (no backend required)
 
 ## Getting Started
@@ -64,11 +65,23 @@ npm run preview
 
 ### 1. Select Terrain Layout
 
-Use the dropdown to choose one of 8 GW official layouts. The terrain will render on the board with:
+Use the dropdown to choose a GW terrain layout. The terrain will render on the board with:
 - Dark gray = blocking terrain (tall ruins)
 - Light gray = non-blocking terrain (low debris)
 
-### 2. Add Units
+### 2. Select Deployment Pattern
+
+Choose from 6 official Leviathan deployment patterns:
+- **Dawn of War** - Horizontal 12" strips
+- **Hammer and Anvil** - Vertical 18" strips
+- **Tipping Point** - L-shaped zones
+- **Sweeping Engagement** - Staggered zones
+- **Crucible of Battle** - Triangular corners
+- **Search and Destroy** - Corner deployment
+
+Or use "terrain default" to use zones defined in the terrain layout.
+
+### 3. Add Units
 
 Fill out the form:
 - **Unit Name**: e.g., "Intercessors"
@@ -78,13 +91,13 @@ Fill out the form:
 
 Click "Add Unit" and bases will appear in the center of the board.
 
-### 3. Position Units
+### 4. Position Units
 
 - **Drag** bases to desired positions
 - **Double-click** a base to lock/unlock it (prevents accidental movement)
 - Units remain interactive - you can continue adjusting after visibility analysis
 
-### 4. Analyze Visibility
+### 5. Analyze Visibility
 
 1. Ensure terrain layout is selected
 2. Adjust **Analysis Detail** slider:
@@ -93,7 +106,7 @@ Click "Add Unit" and bases will appear in the center of the board.
 3. Click **Analyze Visibility**
 4. Wait for heat map to generate
 
-### 5. Interpret Results
+### 6. Interpret Results
 
 The board will overlay a heat map:
 - 🔴 **Red zones** = Danger (visible from ANY opponent position)
@@ -111,12 +124,13 @@ Statistics panel shows:
 src/
 ├── lib/
 │   ├── components/
-│   │   ├── board/           # Canvas rendering components
-│   │   ├── controls/        # UI controls
-│   │   ├── terrain/         # Terrain rendering
-│   │   └── units/           # Unit/base rendering
+│   │   ├── board/           # Canvas rendering (GameBoard.svelte)
+│   │   ├── controls/        # UI controls (selectors, unit management)
+│   │   ├── terrain/         # (unused - rendering in GameBoard)
+│   │   └── units/           # (unused - rendering in GameBoard)
 │   ├── data/
-│   │   ├── terrain-layouts/gw/  # 8 GW layouts
+│   │   ├── terrain-layouts/gw/  # GW terrain layouts
+│   │   ├── deployment-patterns.json  # 6 Leviathan patterns
 │   │   └── base-sizes.json      # All 40k base sizes
 │   ├── stores/              # Svelte stores for state
 │   ├── types/               # TypeScript definitions
@@ -214,9 +228,10 @@ See [.justfile.md](.justfile.md) for complete just documentation.
 ## Credits
 
 - Terrain layouts: Games Workshop via [Wahapedia](http://wahapedia.ru)
+- Deployment patterns: Leviathan mission pack
 - Ray casting: Bresenham's line algorithm
 - Collision detection: [detect-collisions](https://github.com/Prozi/detect-collisions)
-- Canvas rendering: [Konva.js](https://konvajs.org/) + [svelte-konva](https://github.com/konvajs/svelte-konva)
+- Canvas rendering: [Konva.js](https://konvajs.org/)
 
 ---
 

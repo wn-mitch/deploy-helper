@@ -5,7 +5,8 @@
 A browser-based deployment planning tool for Warhammer 40,000 players. Helps optimize model placement by visualizing official terrain layouts and calculating line-of-sight visibility zones.
 
 **Key Features:**
-- Display 8 official GW terrain layouts on a 60"×44" board
+- Display GW terrain layouts on a 60"×44" board
+- 6 official Leviathan deployment patterns (independent of terrain)
 - Add and drag units with various base sizes (25mm-170mm)
 - Ray-casting visibility analysis to identify "danger zones" (exposed to opponent) and "safe zones" (hidden)
 - Pure client-side application (no backend required)
@@ -30,11 +31,11 @@ A browser-based deployment planning tool for Warhammer 40,000 players. Helps opt
 - Custom geometry utilities for coordinate conversion (inches ↔ pixels)
 
 ### Key Dependencies
-```json
+```deploy-helper/package.json#L1-5
 {
   "konva": "^9.3.22",
   "detect-collisions": "^7.x",
-  "nanoid": "^5.x" // Unique ID generation
+  "nanoid": "^5.x"
 }
 ```
 
@@ -43,7 +44,7 @@ A browser-based deployment planning tool for Warhammer 40,000 players. Helps opt
 ### Coordinate System
 **Critical Convention:** All data stored in **inches**, converted to pixels only for rendering.
 
-```typescript
+```deploy-helper/src/lib/utils/constants.ts#L1-6
 // Constants
 BOARD_WIDTH = 60 inches → 1200px (at 20px/inch)
 BOARD_HEIGHT = 44 inches → 880px
@@ -62,23 +63,25 @@ pixelsToInches(pixels: number): number
 
 **Store Pattern:** Custom stores with domain-specific methods
 
-```typescript
+```deploy-helper/src/lib/stores/index.ts#L1-7
 // src/lib/stores/
-terrain.ts    // Current layout, available layouts
-units.ts      // Units on board, CRUD operations
-visibility.ts // Visibility grid, analysis state
-selection.ts  // Visibility source selection
-board.ts      // Zoom/pan (future feature)
+terrain.ts     // Current layout, available layouts
+units.ts       // Units on board, CRUD operations
+visibility.ts  // Visibility grid, analysis state
+selection.ts   // Visibility source selection
+deployment.ts  // Deployment pattern selection (6 Leviathan patterns)
+board.ts       // Zoom/pan (future feature)
 ```
 
 **Store Usage:**
-```typescript
+```deploy-helper/example.ts#L1-8
 // Subscribe with $ prefix (Svelte auto-subscription)
 $: currentLayout = $terrainStore.currentLayout;
 
 // Call store methods directly
 terrainStore.loadLayout('layout-1');
 unitsStore.createUnit(name, baseSize, count, position, color);
+deploymentStore.loadPattern('dawn-of-war');
 ```
 
 ### Component Structure
@@ -88,19 +91,21 @@ src/lib/components/
 ├── board/
 │   └── GameBoard.svelte          # Main Konva stage (all rendering)
 ├── controls/
+│   ├── DeploymentSelector.svelte # Deployment pattern dropdown (6 patterns)
 │   ├── LayoutSelector.svelte     # Terrain layout dropdown
 │   ├── UnitControls.svelte       # Add/remove units
 │   └── RayCastControls.svelte    # Visibility analysis UI
 ├── terrain/                      # (Unused - rendering moved to GameBoard)
+├── ui/                           # Shared UI components
 └── units/                        # (Unused - rendering moved to GameBoard)
 ```
 
-**Important:** All Canvas rendering happens in `GameBoard.svelte` using direct Konva API calls. Layer components (`TerrainLayer.svelte`, etc.) exist but are not imported.
+**Important:** All Canvas rendering happens in `GameBoard.svelte` using direct Konva API calls.
 
 ### Data Schema
 
 **Terrain Layouts** (`src/lib/data/terrain-layouts/gw/layout-*.json`)
-```typescript
+```deploy-helper/src/lib/data/terrain-layouts/gw/schema.ts#L1-14
 {
   id: "gw-layout-1",
   pieces: [
@@ -111,19 +116,38 @@ src/lib/components/
       height: 5        // Visual indicator (>4" = darker)
     }
   ],
-  deploymentZones: [
+  deploymentZones: [...]  // Optional default zones
+}
+```
+
+**Deployment Patterns** (`src/lib/data/deployment-patterns.json`)
+```deploy-helper/src/lib/data/deployment-patterns.json#L1-15
+{
+  id: "dawn-of-war",
+  name: "Dawn of War",
+  source: "leviathan",
+  zones: [
     {
-      name: "Attacker",
+      player: "attacker",
       shape: { type: "rectangle", width: 60, height: 12 },
       position: { x: 0, y: 0 },
-      color: "#3b82f6"  // Blue
-    }
+      color: "#3b82f6"
+    },
+    // Defender zone mirrored...
   ]
 }
 ```
 
+**Available Deployment Patterns:**
+- Tipping Point (L-shaped polygons)
+- Hammer and Anvil (vertical strips)
+- Sweeping Engagement (staggered polygons)
+- Dawn of War (horizontal strips)
+- Crucible of Battle (triangular zones)
+- Search and Destroy (corner deployment)
+
 **Base Sizes** (`src/lib/data/base-sizes.json`)
-```typescript
+```deploy-helper/src/lib/data/base-sizes.json#L1-4
 {
   size: 32,              // mm diameter
   radiusInches: 0.630    // Precomputed: (32mm / 25.4 / 2)
@@ -136,7 +160,7 @@ src/lib/components/
 
 **Always follow this pattern for drawing:**
 
-```typescript
+```deploy-helper/src/lib/components/board/pattern.ts#L1-17
 function drawSomething(data: any[]) {
   // 1. Clear existing shapes
   layer.destroyChildren();
@@ -160,7 +184,7 @@ function drawSomething(data: any[]) {
 
 ### 2. Store Subscription Pattern
 
-```typescript
+```deploy-helper/src/lib/components/board/subscription.ts#L1-15
 onMount(() => {
   const unsubTerrain = terrainStore.subscribe(($terrain) => {
     drawTerrain($terrain.currentLayout?.pieces || []);
@@ -180,7 +204,7 @@ onMount(() => {
 
 ### 3. Collision Detection (detect-collisions v7 API)
 
-```typescript
+```deploy-helper/src/lib/utils/collision/example.ts#L1-19
 // Create system
 const system = new System();
 
@@ -204,7 +228,7 @@ system.remove(testCircle);
 ```
 
 **Wrong (doesn't work):**
-```typescript
+```deploy-helper/src/lib/utils/collision/wrong.ts#L1-3
 const box = new Box(...);
 system.insert(box);
 testCircle.potentials(); // ❌ Method doesn't exist
@@ -214,8 +238,9 @@ testCircle.potentials(); // ❌ Method doesn't exist
 
 ### Starting Development Server
 
-```bash
-npm run dev -- --port 5173
+```deploy-helper/justfile#L1-3
+just dev
+# Or: npm run dev -- --port 5173
 # Access at http://localhost:5173
 ```
 
@@ -273,9 +298,14 @@ Key files:
 ### Manual Testing Checklist
 
 **Terrain Rendering:**
-- [ ] All 8 layouts load without errors
+- [ ] Layouts load without errors
 - [ ] Terrain pieces match Wahapedia diagrams
-- [ ] Deployment zones show blue (top) and red (bottom) with labels
+- [ ] Deployment zones render correctly (rectangles and polygons)
+
+**Deployment Patterns:**
+- [ ] All 6 patterns selectable from dropdown
+- [ ] Polygon zones render correctly (Crucible, Tipping Point, etc.)
+- [ ] "Use terrain default" option works
 
 **Unit Management:**
 - [ ] Can add units with all base sizes
@@ -304,16 +334,24 @@ deploy-helper/
 ├── src/
 │   ├── lib/
 │   │   ├── components/        # Svelte components
-│   │   ├── data/             # JSON data files
-│   │   ├── stores/           # State management
-│   │   ├── types/            # TypeScript interfaces
-│   │   └── utils/            # Pure functions
+│   │   ├── data/              # JSON data files
+│   │   │   ├── terrain-layouts/gw/  # GW terrain layouts
+│   │   │   ├── base-sizes.json
+│   │   │   └── deployment-patterns.json
+│   │   ├── stores/            # State management
+│   │   ├── types/             # TypeScript interfaces
+│   │   │   ├── terrain.ts
+│   │   │   ├── units.ts
+│   │   │   ├── deployment.ts
+│   │   │   └── raycasting.ts
+│   │   └── utils/             # Pure functions
 │   └── routes/
-│       ├── +page.svelte      # Main app page
-│       └── +page.ts          # SSR config (ssr = false)
-├── static/                   # Static assets
+│       ├── +page.svelte       # Main app page
+│       └── +page.ts           # SSR config (ssr = false)
+├── static/                    # Static assets
+├── justfile                   # Command runner
 ├── package.json
-├── svelte.config.js          # SvelteKit config (adapter-static)
+├── svelte.config.js           # SvelteKit config (adapter-static)
 ├── tailwind.config.js
 ├── tsconfig.json
 └── vite.config.ts
@@ -322,9 +360,9 @@ deploy-helper/
 ## Deployment
 
 **Build:**
-```bash
-npm run build
-# Outputs to /build directory
+```deploy-helper/justfile#L1-2
+just build
+# Or: npm run build - outputs to /build directory
 ```
 
 **Deployment Targets:**
@@ -337,10 +375,12 @@ npm run build
 ## Future Enhancements
 
 **Planned (Post-MVP):**
+- Additional terrain layouts (currently only layout-1 implemented)
 - WTC and UKTC terrain layouts
 - Movement range circles (6", 12")
 - Coherency checking (2" unit spacing)
 - Save/load deployments (localStorage)
+- Mission objectives overlay
 - Custom terrain editor
 
 **Experimental:**
@@ -365,6 +405,11 @@ npm run build
 - Latest reactivity model (`$:` syntax)
 - Better performance than Svelte 4
 - Simplified component API
+
+### Why separate deployment patterns from terrain?
+- Matches how 40k 10th edition works (deployment chosen separately)
+- Allows any terrain + any deployment combination
+- Cleaner data organization
 
 ### Why client-side only visibility analysis?
 - Users want instant feedback
@@ -393,5 +438,5 @@ npm run build
 
 ---
 
-**Last Updated:** 2026-02-09
-**Project Status:** Phase 1 complete (terrain, units, dragging), Phase 3 in progress (visibility analysis)
+**Last Updated:** 2026-02-10
+**Project Status:** MVP complete - terrain rendering, 6 deployment patterns, unit management, visibility analysis all functional

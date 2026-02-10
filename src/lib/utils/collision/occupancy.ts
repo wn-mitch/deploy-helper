@@ -11,7 +11,7 @@
  * - Only blocking terrain is considered (non-blocking terrain never affects LOS)
  */
 
-import type { TerrainPiece, Point, Shape } from '$lib/types/terrain';
+import type { TerrainPiece, Point, TerrainShape } from '$lib/types/terrain';
 
 /**
  * Determines which terrain pieces a point is standing on.
@@ -64,7 +64,7 @@ export function getTerrainOccupancy(
  */
 export function pointInShape(
   point: Point,
-  shape: Shape,
+  shape: TerrainShape,
   piece: TerrainPiece
 ): boolean {
   // Transform point from world space to shape's local space

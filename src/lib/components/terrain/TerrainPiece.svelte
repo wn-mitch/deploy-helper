@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Rect, Line } from 'svelte-konva';
 	import { inchesToPixels } from '$lib/utils/coordinates';
-	import type { TerrainPiece } from '$lib/types/terrain';
+	import type { TerrainPiece, TerrainShape } from '$lib/types/terrain';
 
 	export let piece: TerrainPiece;
 
@@ -12,14 +12,14 @@
 	// Height visual indicator (darker = taller)
 	$: opacity = piece.height && piece.height > 4 ? 0.9 : 0.7;
 
-	function getRectConfig() {
-		if (piece.shape.type !== 'rectangle') return null;
+	function getRectConfig(shape: TerrainShape) {
+		if (shape.type !== 'rectangle') return null;
 
 		return {
 			x: inchesToPixels(piece.position.x),
 			y: inchesToPixels(piece.position.y),
-			width: inchesToPixels(piece.shape.width),
-			height: inchesToPixels(piece.shape.height),
+			width: inchesToPixels(shape.width),
+			height: inchesToPixels(shape.height),
 			fill: fillColor,
 			stroke: strokeColor,
 			strokeWidth: 2,
@@ -28,11 +28,11 @@
 		};
 	}
 
-	function getPolygonConfig() {
-		if (piece.shape.type !== 'polygon') return null;
+	function getPolygonConfig(shape: TerrainShape) {
+		if (shape.type !== 'polygon') return null;
 
 		// Convert points to flat array of coordinates for Konva
-		const points = piece.shape.points.flatMap((p) => [
+		const points = shape.points.flatMap((p: { x: number; y: number }) => [
 			inchesToPixels(piece.position.x + p.x),
 			inchesToPixels(piece.position.y + p.y)
 		]);
@@ -49,14 +49,16 @@
 	}
 </script>
 
-{#if piece.shape.type === 'rectangle'}
-	{@const config = getRectConfig()}
-	{#if config}
-		<Rect {config} />
+{#each piece.shapes as shape, index}
+	{#if shape.type === 'rectangle'}
+		{@const config = getRectConfig(shape)}
+		{#if config}
+			<Rect {config} />
+		{/if}
+	{:else if shape.type === 'polygon'}
+		{@const config = getPolygonConfig(shape)}
+		{#if config}
+			<Line {config} />
+		{/if}
 	{/if}
-{:else if piece.shape.type === 'polygon'}
-	{@const config = getPolygonConfig()}
-	{#if config}
-		<Line {config} />
-	{/if}
-{/if}
+{/each}

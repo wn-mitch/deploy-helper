@@ -1,15 +1,17 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import Konva from "konva";
-    import type { TerrainPiece } from "$lib/types/terrain";
-    import type { Point } from "$lib/types/geometry";
+    import type { TerrainPiece, Point } from "$lib/types/terrain";
     import { inchesToPixels } from "$lib/utils/coordinates";
     import { PIXELS_PER_INCH } from "$lib/utils/constants";
-    import { isRayBlocked, bresenham } from "$lib/utils/raycasting/bresenham";
+    import { isRayBlocked, isRayBlockedSelective, bresenham } from "$lib/utils/raycasting/bresenham";
     import {
         createCollisionSystem,
         pointIntersectsTerrain,
+        createTerrainCollisionSystems,
+        pointIntersectsTerrainSelective,
     } from "$lib/utils/collision/detector";
+    import { getTerrainOccupancy } from "$lib/utils/collision/occupancy";
 
     // ============================================================================
     // TypeScript Interfaces
@@ -83,7 +85,7 @@
             terrain: [
                 {
                     id: "ruin-1",
-                    shape: { type: "rectangle", width: 12, height: 6 },
+                    shapes: [{ type: "rectangle", width: 12, height: 6 }],
                     position: { x: 9, y: 4 },
                     blocking: true,
                     height: 5,
@@ -116,7 +118,7 @@
             terrain: [
                 {
                     id: "wall-1",
-                    shape: { type: "rectangle", width: 3, height: 2 },
+                    shapes: [{ type: "rectangle", width: 3, height: 2 }],
                     position: { x: 13.5, y: 6 },
                     blocking: true,
                     height: 5,
@@ -140,6 +142,187 @@
             },
             expectedResult: "visible",
             notes: "At least one ray should be clear - unit is exposed",
+        },
+        {
+            id: "scenario-4",
+            name: "Model ON Terrain",
+            description: "Model standing on terrain footprint - should be visible through footprint",
+            boardSize: { width: 30, height: 20 },
+            terrain: [
+                {
+                    id: "ruin-1",
+                    shapes: [
+                        { type: "rectangle", width: 10, height: 6 }  // Footprint only, no walls
+                    ],
+                    position: { x: 10, y: 7 },
+                    blocking: true,
+                    height: 5,
+                },
+            ],
+            testUnit: {
+                name: "Test Unit",
+                baseSize: 32,
+                position: { x: 15, y: 10 },  // Center of footprint
+                color: "#3b82f6",
+            },
+            raySource: {
+                type: "edge",
+                points: [
+                    { x: 15, y: 0 },   // Directly across footprint
+                    { x: 10, y: 0 },
+                    { x: 20, y: 0 },
+                ],
+            },
+            expectedResult: "visible",
+            notes: "Model on footprint can be seen through that footprint",
+        },
+        {
+            id: "scenario-5",
+            name: "Model ON Terrain Behind Wall",
+            description: "Model on footprint but walls block LOS",
+            boardSize: { width: 30, height: 20 },
+            terrain: [
+                {
+                    id: "ruin-1",
+                    shapes: [
+                        { type: "rectangle", width: 10, height: 6 },  // Footprint
+                        {
+                            type: "line",  // Wall blocking rays
+                            start: { x: 2, y: 0 },
+                            end: { x: 8, y: 0 },
+                            thickness: 1
+                        }
+                    ],
+                    position: { x: 10, y: 7 },
+                    blocking: true,
+                    height: 5,
+                },
+            ],
+            testUnit: {
+                name: "Test Unit",
+                baseSize: 32,
+                position: { x: 15, y: 11 },  // Behind wall, on footprint
+                color: "#3b82f6",
+            },
+            raySource: {
+                type: "edge",
+                points: [
+                    { x: 15, y: 0 },  // Rays blocked by wall
+                    { x: 12, y: 0 },
+                    { x: 18, y: 0 },
+                ],
+            },
+            expectedResult: "safe",
+            notes: "Walls still block even when model is on the footprint",
+        },
+        {
+            id: "scenario-6",
+            name: "Both ON Same Terrain",
+            description: "Source and target both on same footprint - clear LOS",
+            boardSize: { width: 30, height: 20 },
+            terrain: [
+                {
+                    id: "ruin-1",
+                    shapes: [
+                        { type: "rectangle", width: 14, height: 10 }  // Large footprint
+                    ],
+                    position: { x: 8, y: 5 },
+                    blocking: true,
+                    height: 5,
+                },
+            ],
+            testUnit: {
+                name: "Test Unit",
+                baseSize: 32,
+                position: { x: 15, y: 10 },  // On footprint
+                color: "#3b82f6",
+            },
+            raySource: {
+                type: "edge",
+                points: [
+                    { x: 12, y: 7 },   // Also on same footprint
+                    { x: 18, y: 13 },  // Also on same footprint
+                ],
+            },
+            expectedResult: "visible",
+            notes: "Models on same terrain can see each other",
+        },
+        {
+            id: "scenario-7",
+            name: "Different Terrain Pieces",
+            description: "Each model on different terrain - both footprints excluded",
+            boardSize: { width: 30, height: 20 },
+            terrain: [
+                {
+                    id: "ruin-a",
+                    shapes: [
+                        { type: "rectangle", width: 8, height: 5 }
+                    ],
+                    position: { x: 3, y: 1 },
+                    blocking: true,
+                    height: 5,
+                },
+                {
+                    id: "ruin-b",
+                    shapes: [
+                        { type: "rectangle", width: 8, height: 5 }
+                    ],
+                    position: { x: 19, y: 14 },
+                    blocking: true,
+                    height: 5,
+                },
+            ],
+            testUnit: {
+                name: "Test Unit",
+                baseSize: 32,
+                position: { x: 23, y: 16.5 },  // Center of ruin-b
+                color: "#3b82f6",
+            },
+            raySource: {
+                type: "edge",
+                points: [
+                    { x: 7, y: 3.5 },  // Center of ruin-a
+                ],
+            },
+            expectedResult: "visible",
+            notes: "Each terrain's footprint excluded for its model - clear ray between them",
+        },
+        {
+            id: "scenario-8",
+            name: "Same Footprint, Wall Between",
+            description: "Both on same footprint but wall separates them - should NOT see",
+            boardSize: { width: 30, height: 20 },
+            terrain: [
+                {
+                    id: "ruin-1",
+                    shapes: [
+                        { type: "rectangle", width: 16, height: 10 },  // Large footprint
+                        {
+                            type: "line",  // Wall dividing the footprint
+                            start: { x: 8, y: 2 },
+                            end: { x: 8, y: 8 },
+                            thickness: 1
+                        }
+                    ],
+                    position: { x: 7, y: 5 },
+                    blocking: true,
+                    height: 5,
+                },
+            ],
+            testUnit: {
+                name: "Test Unit",
+                baseSize: 32,
+                position: { x: 18, y: 10 },  // Right side of footprint
+                color: "#3b82f6",
+            },
+            raySource: {
+                type: "edge",
+                points: [
+                    { x: 11, y: 10 },  // Left side of footprint, behind wall
+                ],
+            },
+            expectedResult: "safe",
+            notes: "Both models on same footprint, but wall between them blocks LOS",
         },
     ];
 
@@ -235,55 +418,86 @@
         );
 
         for (const piece of currentScenario.terrain) {
-            if (piece.shape.type === "rectangle") {
-                const terrainHeight = piece.height ?? 0;
-                console.log(
-                    "Drawing terrain piece:",
-                    piece.id,
-                    "at",
-                    piece.position,
-                    "size",
-                    piece.shape.width,
-                    "x",
-                    piece.shape.height,
-                );
+            const terrainHeight = piece.height ?? 0;
 
-                const rect = new Konva.Rect({
-                    x: inchesToPixels(piece.position.x),
-                    y: inchesToPixels(piece.position.y),
-                    width: inchesToPixels(piece.shape.width),
-                    height: inchesToPixels(piece.shape.height),
-                    fill: terrainHeight > 4 ? "#6b7280" : "#9ca3af",
-                    stroke: "#f59e0b", // Bright orange border for visibility
-                    strokeWidth: 3,
-                    listening: false,
-                });
-                terrainLayer.add(rect);
+            piece.shapes.forEach((shape, index) => {
+                const isFootprint = index === 0;
 
-                console.log(
-                    "Added rect to layer:",
-                    rect.x(),
-                    rect.y(),
-                    rect.width(),
-                    rect.height(),
-                );
+                if (shape.type === "rectangle") {
+                    console.log(
+                        `Drawing ${isFootprint ? "footprint" : "wall"}:`,
+                        piece.id,
+                        "at",
+                        piece.position,
+                        "size",
+                        shape.width,
+                        "x",
+                        shape.height,
+                    );
 
-                // Label
-                const label = new Konva.Text({
-                    x: inchesToPixels(piece.position.x),
-                    y:
-                        inchesToPixels(piece.position.y) +
-                        inchesToPixels(piece.shape.height) / 2 -
-                        10,
-                    width: inchesToPixels(piece.shape.width),
-                    text: `${piece.shape.width}"×${piece.shape.height}"\nH:${terrainHeight}"`,
-                    fontSize: 12,
-                    fill: "#ffffff",
-                    align: "center",
-                    listening: false,
-                });
-                terrainLayer.add(label);
-            }
+                    const rect = new Konva.Rect({
+                        x: inchesToPixels(piece.position.x),
+                        y: inchesToPixels(piece.position.y),
+                        width: inchesToPixels(shape.width),
+                        height: inchesToPixels(shape.height),
+                        fill: isFootprint
+                            ? (terrainHeight > 4 ? "#6b7280" : "#9ca3af")
+                            : "#4b5563",  // Darker for walls
+                        stroke: isFootprint ? "#f59e0b" : "#ef4444",  // Orange for footprint, red for walls
+                        strokeWidth: 3,
+                        listening: false,
+                    });
+                    terrainLayer.add(rect);
+
+                    console.log(
+                        "Added rect to layer:",
+                        rect.x(),
+                        rect.y(),
+                        rect.width(),
+                        rect.height(),
+                    );
+
+                    // Label (only for footprint)
+                    if (isFootprint) {
+                        const label = new Konva.Text({
+                            x: inchesToPixels(piece.position.x),
+                            y:
+                                inchesToPixels(piece.position.y) +
+                                inchesToPixels(shape.height) / 2 -
+                                10,
+                            width: inchesToPixels(shape.width),
+                            text: `${shape.width}"×${shape.height}"\nH:${terrainHeight}"`,
+                            fontSize: 12,
+                            fill: "#ffffff",
+                            align: "center",
+                            listening: false,
+                        });
+                        terrainLayer.add(label);
+                    }
+                } else if (shape.type === "line") {
+                    console.log(
+                        "Drawing wall line:",
+                        piece.id,
+                        "from",
+                        shape.start,
+                        "to",
+                        shape.end,
+                    );
+
+                    const line = new Konva.Line({
+                        points: [
+                            inchesToPixels(piece.position.x + shape.start.x),
+                            inchesToPixels(piece.position.y + shape.start.y),
+                            inchesToPixels(piece.position.x + shape.end.x),
+                            inchesToPixels(piece.position.y + shape.end.y),
+                        ],
+                        stroke: "#ef4444",  // Red for walls
+                        strokeWidth: inchesToPixels(shape.thickness),
+                        listening: false,
+                    });
+                    terrainLayer.add(line);
+                }
+            });
         }
 
         console.log(
@@ -423,24 +637,21 @@
     // ============================================================================
 
     function analyzeVisibility(): AnalysisResult {
-        console.log("=== Starting Analysis ===");
+        console.log("=== Starting Terrain-Aware Analysis ===");
         console.log("Terrain pieces:", currentScenario.terrain.length);
-        currentScenario.terrain.forEach((piece) => {
-            console.log(
-                "  Terrain piece:",
-                piece.id,
-                "blocking:",
-                piece.blocking,
-                "at",
-                piece.position,
-            );
-        });
 
-        const collisionSystem = createCollisionSystem(currentScenario.terrain);
-        console.log(
-            "Collision system created, bodies:",
-            collisionSystem.all().length,
+        // Create enhanced collision systems
+        const collisionSystems = createTerrainCollisionSystems(currentScenario.terrain);
+        console.log("Collision systems created");
+        console.log("  Footprint bodies:", collisionSystems.footprints.all().length);
+        console.log("  Wall bodies:", collisionSystems.walls.all().length);
+
+        // Get terrain occupancy for test unit
+        const targetOccupancy = getTerrainOccupancy(
+            currentScenario.testUnit.position,
+            currentScenario.terrain
         );
+        console.log("Target occupancy:", targetOccupancy);
 
         let blockedCount = 0;
         let clearCount = 0;
@@ -451,45 +662,24 @@
         }> = [];
 
         for (const source of currentScenario.raySource.points) {
-            // Log detailed info for the problematic ray at x=10
-            if (source.x === 10) {
-                console.log(
-                    `  *** Detailed analysis for ray from (${source.x}, ${source.y}) ***`,
-                );
-                const samples = [];
-                const dx = currentScenario.testUnit.position.x - source.x;
-                const dy = currentScenario.testUnit.position.y - source.y;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                const steps = Math.ceil(distance / 0.2);
-                const xStep = dx / steps;
-                const yStep = dy / steps;
+            // Get source occupancy
+            const sourceOccupancy = getTerrainOccupancy(source, currentScenario.terrain);
+            console.log(`Source (${source.x}, ${source.y}) occupancy:`, sourceOccupancy);
 
-                for (let i = 0; i <= Math.min(steps, 10); i++) {
-                    const samplePoint = {
-                        x: source.x + xStep * i,
-                        y: source.y + yStep * i,
-                    };
-                    const hits = pointIntersectsTerrain(
-                        collisionSystem,
-                        samplePoint,
-                    );
-                    samples.push({ point: samplePoint, hits });
-                    console.log(
-                        `    Sample ${i}: (${samplePoint.x.toFixed(2)}, ${samplePoint.y.toFixed(2)}) => ${hits ? "HIT" : "miss"}`,
-                    );
-                }
-            }
+            // Combine exclusions
+            const excludeFootprints = [...sourceOccupancy, ...targetOccupancy];
+            console.log("  Excluding footprints:", excludeFootprints);
 
-            const blocked = isRayBlocked(
+            // Use terrain-aware ray blocking
+            const blocked = isRayBlockedSelective(
                 source,
                 currentScenario.testUnit.position,
-                (point) => pointIntersectsTerrain(collisionSystem, point),
-                0.2, // Sample every 0.2 inches
+                collisionSystems,
+                excludeFootprints,
+                0.2
             );
 
-            console.log(
-                `  Ray from (${source.x}, ${source.y}) to unit: ${blocked ? "BLOCKED" : "CLEAR"}`,
-            );
+            console.log(`  Ray result: ${blocked ? "BLOCKED" : "CLEAR"}`);
 
             rayResults.push({
                 source,
@@ -505,10 +695,9 @@
         }
 
         console.log("=== Analysis Complete ===");
-        console.log("Result:", clearCount === 0 ? "SAFE" : "VISIBLE");
-        console.log("Blocked:", blockedCount, "Clear:", clearCount);
-
         const result = clearCount === 0 ? "safe" : "visible";
+        console.log("Result:", result);
+        console.log("Blocked:", blockedCount, "Clear:", clearCount);
 
         return {
             result,
